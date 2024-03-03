@@ -61,7 +61,7 @@ namespace EventsBotMain.Properties {
         }
         
         /// <summary>
-        ///   Looks up a localized string similar to MTIxMDUxNjgwOTk1NDg5MzgyNA.GZrOqr.rX7XrEDl47naFpoLet7bZ6kRYuKD8Uy6ZD3_BA.
+        ///   Looks up a localized string similar to MTIxMDUxNjgwOTk1NDg5MzgyNA.GqiPqL.gerZluPg5UiXzUHCtgWsVKnefCs8iIeCx7BM9E.
         /// </summary>
         internal static string DISCORD_TOKEn {
             get {
