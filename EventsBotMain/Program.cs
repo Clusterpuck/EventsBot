@@ -10,12 +10,15 @@
     using Ical.Net.Serialization;
     using Newtonsoft.Json;
     using System;
+    using System.Runtime.ConstrainedExecution;
+    using System.Text.RegularExpressions;
     using System.Threading.Tasks;
 
     class Program
     {
         private static DiscordSocketClient Client { get; set; }
         private HashSet<ulong> optedInUsers;
+        private readonly string FILENAME = "optedInUsers.json";
         static async Task Main(string[] args)
         {
             Program program = new Program();
@@ -28,8 +31,6 @@
             Client = new DiscordSocketClient();
             Client.Ready += Client_Ready;
 
-            Timer saveTimer = new Timer(SaveOptedInUsers, null, TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(10)); // Save every 10 minutes
-
             Client.Log += Log;
             //Populates log of created events for populating fields
             Client.GuildScheduledEventCreated += HandleNewEvent;
@@ -41,6 +42,7 @@
             await Client.LoginAsync(TokenType.Bot, discordToken);
             await Client.StartAsync();
 
+            //Run app indefinitely
             await Task.Delay(-1);
 
         }
@@ -107,12 +109,15 @@
             }
         }
 
+
+
         private async Task OptInUser(SocketUser user)
         {
             if (!optedInUsers.Contains(user.Id))
             {
                 optedInUsers.Add(user.Id);
-                await user.SendMessageAsync("You have successfully opted in to the calendar service.");
+                SaveOptedInUsers(null);
+                await user.SendMessageAsync("You have successfully opted in to the calendar service. To opt out use `/stop`");
             }
             else
             {
@@ -125,7 +130,8 @@
             if (optedInUsers.Contains(user.Id))
             {
                 optedInUsers.Remove(user.Id);
-                await user.SendMessageAsync("You have successfully opted out of the calendar service.");
+                SaveOptedInUsers(null);
+                await user.SendMessageAsync("You have successfully opted out of the calendar service. To opt in again use `/optin`");
             }
             else
             {
@@ -171,9 +177,13 @@
 
                     // Save the serialized iCal to a file
                     var filePath = $"{ev.Name}_{ev.Guild}.ics";
+                    filePath = SanitizeFileName(filePath);    
                     System.IO.File.WriteAllText(filePath, serializedCalendar);
-                    await dmChannel.SendFileAsync(filePath, $"I'm sure {ev.Guild} are stoked to hear you're coming to {ev.Name}, {user.Mention}! Download this file to add the event to your calendar! Or add to your google calendar [here]({googleLink})");
+                    await dmChannel.SendFileAsync(filePath, $":wave: I'm sure **{ev.Guild}** are stoked to hear you're coming to **{ev.Name}**, {user.Mention}!\n:calendar: Download this file to add the event to your calendar! Or add to your google calendar [here](<{googleLink}>)");
 
+                    //TODO consider deleting old ics files intermittently. 
+                    //Perhaps search for any files older than approx 5 days and 
+                    //Delete one for every one created
                     Console.WriteLine($"iCal file generated and saved to: {filePath}");
 
                     // You can include additional information or attach files as needed
@@ -188,6 +198,19 @@
         }
 
 
+        // Function to sanitize a string for filenames
+        string SanitizeFileName(string input)
+        {
+            // Define a regular expression to match invalid characters in filenames
+            var invalidCharsRegex = new Regex("[\\/:*?\"<>|]");
+
+            // Replace invalid characters with an underscore
+            string sanitizedInput = invalidCharsRegex.Replace(input, "_");
+
+            return sanitizedInput;
+        }
+
+
         private string GenerateGoogleCalendarLink(SocketGuildEvent ev)
         {
             // Encode special characters in the event details
@@ -195,10 +218,12 @@
             string location = "";
             if( ev.Location != null )
             {
+                location = SanitizeFileName(ev.Location);
                 location = Uri.EscapeDataString(ev.Location);
             }
             else
             {
+                location = SanitizeFileName(ev.Channel.Name);
                 location = Uri.EscapeDataString(ev.Channel.Name);
             }
 
@@ -232,24 +257,25 @@
         }
 
         private Ical.Net.Calendar makeCalendarEvent( SocketGuildEvent ev )
-        {
+        {//TODO Sanitise location string to remove special characters
             var calendar = new Ical.Net.Calendar();
             string location;
             CalDateTime endTime = null;
             if (ev.Location == null || ev.Location == "")
             {//Voice channel event, sets end time to default 1 hour after start
                 location = ev.Channel.ToString();
+                location = SanitizeFileName(location);
                 endTime = new CalDateTime(ev.StartTime.Year, ev.StartTime.Month, ev.StartTime.Day, ev.StartTime.Hour - (int)ev.StartTime.Offset.TotalHours + 1, ev.StartTime.Minute, 0, "UTC");
             }
             else
             {//External location event
-                location = ev.Location;
+                location = SanitizeFileName( ev.Location);
                 endTime = new CalDateTime(ev.EndTime.Value.Year, ev.EndTime.Value.Month, ev.EndTime.Value.Day, ev.EndTime.Value.Hour - (int)ev.StartTime.Offset.TotalHours, ev.EndTime.Value.Minute, 0, "UTC");
             }
 
             var calendarEvent = new CalendarEvent
             {
-                Summary = ev.Name,
+                Summary = SanitizeFileName(ev.Name),
                 Description = ev.Description,
                 Location = location,
                 //Due to limitation of timezone difference and offset, subtracts offset and sets timezone to UTC for simplistic solution
@@ -264,18 +290,26 @@
 
         private void SaveOptedInUsers( object? state )
         {
-            Console.WriteLine($"Saving list of {optedInUsers.Count} opted in users");
-            string json = JsonConvert.SerializeObject(optedInUsers, Formatting.Indented);
-            File.WriteAllText("optedInUsers.json", json);
+            try
+            {
+                Console.WriteLine($"Saving list of {optedInUsers.Count} opted-in users");
+                string json = JsonConvert.SerializeObject(optedInUsers, Formatting.Indented);
+                File.WriteAllText(FILENAME, json);
+                Console.WriteLine("Save successful.");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error saving file: {ex.Message}");
+            }
         }
 
         private HashSet<ulong> LoadOptedInUsers()
         {
             Console.WriteLine("Starting load opted in");
-            if (File.Exists("optedInUsers.json"))
+            if (File.Exists(FILENAME))
             {
                 Console.WriteLine("Found file to load users");
-                string json = File.ReadAllText("optedInUsers.json");
+                string json = File.ReadAllText(FILENAME);
                 return JsonConvert.DeserializeObject<HashSet<ulong>>(json);
             }
             Console.WriteLine("No file found for users");
